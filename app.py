@@ -8,6 +8,9 @@ from crud.menu_crud import *
 from crud.cliente_crud import *
 from crud.pedido_crud import *
 from fpdf import FPDF
+from sqlalchemy.orm import Session
+from models import Menu, Ingrediente, menu_ingrediente
+from datetime import datetime
 
 Session = sessionmaker(bind=engine)
 
@@ -25,11 +28,13 @@ class MainApp(ctk.CTk):
         self.menus_panel = MenusPanel(self.notebook)
         self.clientes_panel = ClientesPanel(self.notebook)
         self.compras_panel = ComprasPanel(self.notebook)
+        self.graficos_panel = GraficosPanel(self.notebook)
 
         self.notebook.add(self.ingredientes_panel, text="Ingredientes")
         self.notebook.add(self.menus_panel, text="Menús")
         self.notebook.add(self.clientes_panel, text="Clientes")
         self.notebook.add(self.compras_panel, text="Compras")
+        self.notebook.add(self.graficos_panel, text="Gráficos")
 
 
 class IngredientesPanel(ctk.CTkFrame):
@@ -37,12 +42,11 @@ class IngredientesPanel(ctk.CTkFrame):
         super().__init__(parent, **kwargs)
 
         # Tabla de ingredientes
-        self.tree = ttk.Treeview(self, columns=("ID", "Nombre", "Tipo", "Cantidad", "Unidad"), show="headings")
+        self.tree = ttk.Treeview(self, columns=("ID", "Nombre", "Tipo", "Cantidad"), show="headings")
         self.tree.heading("ID", text="ID")
         self.tree.heading("Nombre", text="Nombre")
         self.tree.heading("Tipo", text="Tipo")
         self.tree.heading("Cantidad", text="Cantidad")
-        self.tree.heading("Unidad", text="Unidad")
         self.tree.pack(fill="both", expand=True)
 
         # Campos para agregar ingredientes
@@ -61,11 +65,7 @@ class IngredientesPanel(ctk.CTkFrame):
         self.cantidad_entry = ctk.CTkEntry(form_frame)
         self.cantidad_entry.grid(row=1, column=1, padx=5, pady=5)
 
-        ctk.CTkLabel(form_frame, text="Unidad:").grid(row=1, column=2, padx=5, pady=5)
-        self.unidad_entry = ctk.CTkEntry(form_frame)
-        self.unidad_entry.grid(row=1, column=3, padx=5, pady=5)
-
-        # Botones para agregar y eliminar
+        # Botones para agregar, eliminar y actualizar
         button_frame = ctk.CTkFrame(self)
         button_frame.pack(fill="x", padx=10, pady=5)
 
@@ -75,40 +75,52 @@ class IngredientesPanel(ctk.CTkFrame):
         self.eliminar_button = ctk.CTkButton(button_frame, text="Eliminar", command=self.eliminar_ingrediente)
         self.eliminar_button.pack(side="left", padx=10, pady=10)
 
+        self.actualizar_button = ctk.CTkButton(button_frame, text="Actualizar", command=self.actualizar_ingrediente)
+        self.actualizar_button.pack(side="left", padx=10, pady=10)
+
         self.load_ingredientes()
 
     def load_ingredientes(self):
         """Carga todos los ingredientes en la tabla."""
-        session = Session()
-        ingredientes = obtener_ingredientes(session)
-        self.tree.delete(*self.tree.get_children())  # Limpiar tabla
-        for ingrediente in ingredientes:
-            self.tree.insert("", "end", values=(ingrediente.id, ingrediente.nombre, ingrediente.tipo, ingrediente.cantidad, ingrediente.unidad))
-        session.close()
+        try:
+            session = Session()
+            ingredientes = obtener_ingredientes(session)
+            self.tree.delete(*self.tree.get_children())  # Limpiar tabla
+            for ingrediente in ingredientes:
+                self.tree.insert("", "end", values=(ingrediente.id, ingrediente.nombre, ingrediente.tipo, ingrediente.cantidad))
+            session.close()
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudieron cargar los ingredientes: {e}")
+
 
     def agregar_ingrediente(self):
         """Agrega un nuevo ingrediente usando los datos del formulario."""
-        nombre = self.nombre_entry.get()
-        tipo = self.tipo_entry.get()
-        cantidad = self.cantidad_entry.get()
-        unidad = self.unidad_entry.get()
+        nombre = self.nombre_entry.get().strip()
+        tipo = self.tipo_entry.get().strip()
+        cantidad = self.cantidad_entry.get().strip()
 
-        if not nombre or not tipo or not cantidad or not unidad:
+        if not nombre or not tipo or not cantidad:
             messagebox.showerror("Error", "Todos los campos son obligatorios.")
             return
-        
+
         try:
             cantidad = int(cantidad)
+            if cantidad < 0:
+                raise ValueError("La cantidad debe ser un número positivo.")
+
             session = Session()
-            resultado = crear_ingrediente(session, nombre, tipo, cantidad, unidad)
+            resultado = crear_ingrediente(session, nombre, tipo, cantidad)
             session.close()
             if resultado["status"] == "success":
                 self.load_ingredientes()
                 self.limpiar_formulario()
+                messagebox.showinfo("Éxito", "Ingrediente agregado exitosamente.")
             else:
                 messagebox.showerror("Error", resultado["message"])
-        except ValueError:
-            messagebox.showerror("Error", "La cantidad debe ser un número entero.")
+        except ValueError as ve:
+            messagebox.showerror("Error", f"Cantidad inválida: {ve}")
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo agregar el ingrediente: {e}")
 
     def eliminar_ingrediente(self):
         """Elimina el ingrediente seleccionado en la tabla."""
@@ -120,20 +132,61 @@ class IngredientesPanel(ctk.CTkFrame):
         item = self.tree.item(seleccionado)
         ingrediente_id = item["values"][0]
 
-        session = Session()
-        resultado = eliminar_ingrediente(session, ingrediente_id)
-        session.close()
-        if resultado["status"] == "success":
-            self.load_ingredientes()
-        else:
-            messagebox.showerror("Error", resultado["message"])
+        try:
+            session = Session()
+            resultado = eliminar_ingrediente(session, ingrediente_id)
+            session.close()
+            if resultado["status"] == "success":
+                self.load_ingredientes()
+                messagebox.showinfo("Éxito", "Ingrediente eliminado exitosamente.")
+            else:
+                messagebox.showerror("Error", resultado["message"])
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo eliminar el ingrediente: {e}")
+
+    def actualizar_ingrediente(self):
+        """Actualiza el ingrediente seleccionado en la tabla."""
+        seleccionado = self.tree.selection()
+        if not seleccionado:
+            messagebox.showerror("Error", "Seleccione un ingrediente para actualizar.")
+            return
+
+        item = self.tree.item(seleccionado)
+        ingrediente_id = item["values"][0]
+        nombre = self.nombre_entry.get().strip()
+        tipo = self.tipo_entry.get().strip()
+        cantidad = self.cantidad_entry.get().strip()
+
+        if not nombre or not tipo or not cantidad:
+            messagebox.showerror("Error", "Todos los campos son obligatorios.")
+            return
+
+        try:
+            cantidad = int(cantidad)
+            if cantidad < 0:
+                raise ValueError("La cantidad debe ser un número positivo.")
+
+            session = Session()
+            resultado = actualizar_ingrediente(session, ingrediente_id, nombre, tipo, cantidad)
+            session.close()
+            if resultado["status"] == "success":
+                self.load_ingredientes()
+                self.limpiar_formulario()
+                messagebox.showinfo("Éxito", "Ingrediente actualizado exitosamente.")
+            else:
+                messagebox.showerror("Error", resultado["message"])
+        except ValueError as ve:
+            messagebox.showerror("Error", f"Cantidad inválida: {ve}")
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo actualizar el ingrediente: {e}")
 
     def limpiar_formulario(self):
         """Limpia los campos del formulario."""
         self.nombre_entry.delete(0, "end")
         self.tipo_entry.delete(0, "end")
         self.cantidad_entry.delete(0, "end")
-        self.unidad_entry.delete(0, "end")
+
+
 
 
 class MenusPanel(ctk.CTkFrame):
@@ -376,9 +429,16 @@ class ComprasPanel(ctk.CTkFrame):
         self.carrito_tree.heading("Precio Total", text="Precio Total")
         self.carrito_tree.grid(row=3, column=0, columnspan=2, padx=10, pady=10)
 
+        # Botones para actualizar y eliminar del carrito
+        self.actualizar_button = ctk.CTkButton(self, text="Actualizar Cantidad", command=self.actualizar_carrito_item)
+        self.actualizar_button.grid(row=4, column=0, padx=10, pady=10)
+
+        self.eliminar_button = ctk.CTkButton(self, text="Eliminar del Carrito", command=self.eliminar_del_carrito)
+        self.eliminar_button.grid(row=4, column=1, padx=10, pady=10)
+
         # Botón para generar boleta
         self.comprar_button = ctk.CTkButton(self, text="Generar Boleta", command=self.generar_boleta)
-        self.comprar_button.grid(row=4, column=0, padx=10, pady=10)
+        self.comprar_button.grid(row=5, column=0, columnspan=2, padx=10, pady=10)
 
         # Carrito de compras
         self.carrito = []
@@ -427,10 +487,40 @@ class ComprasPanel(ctk.CTkFrame):
         for item in self.carrito:
             self.carrito_tree.insert("", "end", values=(item["menu_id"], item["nombre"], item["cantidad"], item["precio_total"]))
 
+    def actualizar_carrito_item(self):
+        """Actualiza la cantidad de un ítem del carrito."""
+        seleccionado = self.carrito_tree.selection()
+        if not seleccionado:
+            messagebox.showerror("Error", "Seleccione un ítem del carrito para actualizar.")
+            return
+
+        item_index = self.carrito_tree.index(seleccionado[0])  # Obtener el índice del ítem en el carrito
+        item = self.carrito[item_index]
+
+        # Ventana emergente para actualizar la cantidad
+        nueva_cantidad = simpledialog.askinteger("Actualizar Cantidad", f"Ingrese la nueva cantidad para '{item['nombre']}':", minvalue=1)
+        if not nueva_cantidad:
+            return
+
+        # Actualizar la cantidad y el precio total
+        item["cantidad"] = nueva_cantidad
+        item["precio_total"] = nueva_cantidad * float(item["precio_total"] / item["cantidad"])
+        self.actualizar_carrito()
+
+    def eliminar_del_carrito(self):
+        """Elimina un ítem del carrito."""
+        seleccionado = self.carrito_tree.selection()
+        if not seleccionado:
+            messagebox.showerror("Error", "Seleccione un ítem del carrito para eliminar.")
+            return
+
+        item_index = self.carrito_tree.index(seleccionado[0])  # Obtener el índice del ítem en el carrito
+        del self.carrito[item_index]
+        self.actualizar_carrito()
 
 
     def generar_boleta(self, archivo_pdf="boleta.pdf"):
-        """Genera un PDF de boleta con los datos del carrito y guarda el pedido en la base de datos."""
+        """Genera un PDF de boleta con los datos del carrito y actualiza los inventarios."""
         cliente_seleccionado = self.cliente_combo.get()
         if not cliente_seleccionado:
             messagebox.showerror("Error", "Seleccione un cliente para realizar el pedido.")
@@ -444,15 +534,31 @@ class ComprasPanel(ctk.CTkFrame):
         cliente_id, cliente_nombre = cliente_seleccionado.split(" - ")
         cliente_id = int(cliente_id)
 
-        # Crear el pedido en la base de datos
-        menus = [(item["menu_id"], item["cantidad"]) for item in self.carrito]
         session = Session()
         try:
-            from datetime import datetime
-            fecha_actual = datetime.now().isoformat()
-            resultado = crear_pedido(session, cliente_id, menus, fecha_actual)
-            if resultado["status"] != "success":
-                raise ValueError(resultado["message"])
+            # Validar y reducir los ingredientes de los menús seleccionados
+            for item in self.carrito:
+                menu_id = item["menu_id"]
+                menu = session.query(Menu).get(menu_id)
+
+                if menu:
+                    # Obtener ingredientes y cantidades requeridas
+                    ingredientes = session.execute(
+                        menu_ingrediente.select().where(menu_ingrediente.c.menu_id == menu_id)
+                    ).mappings().all()  # Cambiado para permitir acceso por clave
+
+                    for ingrediente in ingredientes:
+                        ingrediente_id = ingrediente["ingrediente_id"]
+                        cantidad_requerida = ingrediente["cantidad_requerida"] * item["cantidad"]
+
+                        # Validar y reducir cantidad
+                        ingrediente_obj = session.query(Ingrediente).get(ingrediente_id)
+                        if ingrediente_obj.cantidad < cantidad_requerida:
+                            raise ValueError(
+                                f"No hay suficiente cantidad de {ingrediente_obj.nombre} "
+                                f"para completar el pedido."
+                            )
+                        ingrediente_obj.cantidad -= cantidad_requerida
 
             # Crear el PDF de la boleta
             pdf = FPDF()
@@ -494,14 +600,42 @@ class ComprasPanel(ctk.CTkFrame):
             # Guardar el archivo PDF
             pdf.output(archivo_pdf)
 
-            messagebox.showinfo("Éxito", f"Boleta generada: {archivo_pdf}")
-            self.carrito = []  # Vaciar carrito
+            # Confirmar cambios en inventarios
+            session.commit()
+
+            messagebox.showinfo("Éxito", "Pedido realizado y boleta generada.")
+            self.carrito = []  # Vaciar carrito después de completar la compra
             self.actualizar_carrito()
+
         except Exception as e:
             session.rollback()
             messagebox.showerror("Error", f"No se pudo realizar el pedido: {e}")
         finally:
             session.close()
+
+class GraficosPanel(ctk.CTkFrame):
+    def __init__(self, parent, **kwargs):
+        super().__init__(parent, **kwargs)
+
+        # Botones para seleccionar gráficos
+        ctk.CTkButton(self, text="Ventas Diarias", command=self.mostrar_ventas_diarias).pack(pady=10)
+        ctk.CTkButton(self, text="Menús Más Vendidos", command=self.mostrar_menus_mas_vendidos).pack(pady=10)
+        ctk.CTkButton(self, text="Uso de Ingredientes", command=self.mostrar_uso_ingredientes).pack(pady=10)
+
+    def mostrar_ventas_diarias(self):
+        from graficos import obtener_ventas_diarias, graficar_ventas_diarias
+        ventas = obtener_ventas_diarias()
+        graficar_ventas_diarias(ventas)
+
+    def mostrar_menus_mas_vendidos(self):
+        from graficos import obtener_menus_mas_vendidos, graficar_menus_mas_vendidos
+        menus = obtener_menus_mas_vendidos()
+        graficar_menus_mas_vendidos(menus)
+
+    def mostrar_uso_ingredientes(self):
+        from graficos import obtener_uso_ingredientes, graficar_uso_ingredientes
+        ingredientes = obtener_uso_ingredientes()
+        graficar_uso_ingredientes(ingredientes)
 
 
 if __name__ == "__main__":
