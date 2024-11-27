@@ -13,13 +13,14 @@ menu_ingrediente = Table(
     Column('cantidad_requerida', Integer, nullable=False)  # Cantidad necesaria del ingrediente
 )
 
+
 class Ingrediente(Base):
     __tablename__ = 'ingredientes'
     id = Column(Integer, primary_key=True, autoincrement=True)
     nombre = Column(String, nullable=False)
     tipo = Column(String, nullable=False)
     cantidad = Column(Integer, nullable=False)
-    unidad = Column(String, nullable=False)
+
 
 class Menu(Base):
     __tablename__ = 'menus'
