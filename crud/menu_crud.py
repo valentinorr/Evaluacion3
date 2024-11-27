@@ -11,20 +11,16 @@ def crear_menu(session: Session, nombre: str, descripcion: str, precio: float, i
     session.flush()  # Obtener el ID del menú antes de asociar los ingredientes
 
     for ingrediente_id, cantidad_requerida in ingredientes:
-        ingrediente = session.query(Ingrediente).get(ingrediente_id)
-        if ingrediente:
-            if cantidad_requerida <= 0:
-                raise ValueError(f"La cantidad requerida debe ser mayor a 0 para el ingrediente {ingrediente.nombre}.")
-            session.execute(
-                menu_ingrediente.insert().values(
-                    menu_id=nuevo_menu.id,
-                    ingrediente_id=ingrediente_id,
-                    cantidad_requerida=cantidad_requerida
-                )
+        session.execute(
+            menu_ingrediente.insert().values(
+                menu_id=nuevo_menu.id,
+                ingrediente_id=ingrediente_id,
+                cantidad_requerida=cantidad_requerida
             )
-
+        )
     session.commit()
     return {"status": "success", "message": "Menú creado exitosamente."}
+
 
 def obtener_menus(session: Session):
     """Obtiene todos los menús registrados."""
